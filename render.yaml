@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: defile-studio-mcp
+    runtime: node
+    plan: free
+    buildCommand: "echo aucune dependance"
+    startCommand: "node server.js"
+    healthCheckPath: /
