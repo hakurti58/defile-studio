@@ -49,16 +49,15 @@ const TOOLS = [
         subtitle: { type: 'string' },
         source: { type: 'string' },
         header: { type: 'array', items: { type: 'string' }, minItems: 2 },
-        rows: { type: 'array', items: { type: 'array', items: { type: ['string', 'number', 'null'] } }, minItems: 1 },
+        rows: { type: 'array', items: { type: 'array', items: {} }, minItems: 1, description: 'Data rows; cells are strings or numbers (use null or "" when unknown)' },
         prefix: { type: 'string' },
         suffix: { type: 'string' },
         decimals: { type: 'integer', minimum: 0, maximum: 2 },
         lowerBetter: { type: 'array', items: { type: 'string' }, description: 'versus/tournament: criteria where the lowest value wins' },
-        categories: { type: 'object', additionalProperties: { type: 'string' }, description: 'Optional {itemName: category}' },
+        categories: { type: 'object', description: 'Optional map {itemName: category}' },
         speed: { type: 'string', enum: ['slow', 'normal', 'fast'] },
       },
       required: ['type', 'title', 'header', 'rows'],
-      additionalProperties: false,
     },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: Object.assign({}, UI_META, {
@@ -70,7 +69,7 @@ const TOOLS = [
     name: 'defile_open',
     title: 'Ouvrir Défilé Studio',
     description: 'Use this when the user just wants to open the Défilé Studio editor (their saved projects and templates) without new data.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    inputSchema: { type: 'object', properties: {} },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: Object.assign({}, UI_META, {
       'openai/toolInvocation/invoking': 'Ouverture de Défilé…',
@@ -123,7 +122,7 @@ function handle(msg) {
   switch (method) {
     case 'initialize':
       return ok({
-        protocolVersion: (params && params.protocolVersion) || '2025-06-18',
+        protocolVersion: ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'].includes(params && params.protocolVersion) ? params.protocolVersion : '2025-06-18',
         capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
         serverInfo: SERVER_INFO,
         instructions: 'Défilé Studio turns tables into animated chart videos. Call defile_create with the data; the editor opens in the conversation.',
@@ -174,6 +173,7 @@ const server = http.createServer((req, res) => {
   cors(res);
   const url = new URL(req.url, 'http://localhost');
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+  console.log(new Date().toISOString(), req.method, url.pathname, 'accept=' + (req.headers.accept || ''));
   if (url.pathname === '/' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end('<!doctype html><meta charset="utf-8"><title>Défilé Studio MCP</title><p>Serveur MCP Défilé Studio actif. Adresse à donner à ChatGPT : <code>' + (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host + '/mcp</code></p><p><a href="/preview">Aperçu de l’éditeur</a></p>');
@@ -182,7 +182,8 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(WIDGET_HTML);
   }
-  if (url.pathname !== '/mcp') { res.writeHead(404); return res.end('Not found'); }
+  const isMcp = ['/mcp', '/mcp/', '/sse', '/sse/'].includes(url.pathname) || (url.pathname === '/' && req.method === 'POST');
+  if (!isMcp) { res.writeHead(404); return res.end('Not found'); }
   if (req.method === 'GET') { res.writeHead(405, { Allow: 'POST, DELETE' }); return res.end(); }
   if (req.method === 'DELETE') { res.writeHead(200); return res.end(); }
   if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
@@ -195,13 +196,21 @@ const server = http.createServer((req, res) => {
       return res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
     }
     const batch = Array.isArray(msg);
+    console.log('  ->', (batch ? msg : [msg]).map((m) => m && m.method).join(','));
     const replies = (batch ? msg : [msg]).map(handle).filter(Boolean);
     const headers = { 'Content-Type': 'application/json' };
     const isInit = (batch ? msg : [msg]).some((m) => m && m.method === 'initialize');
     headers['Mcp-Session-Id'] = isInit ? crypto.randomUUID() : (req.headers['mcp-session-id'] || crypto.randomUUID());
     if (!replies.length) { res.writeHead(202, headers); return res.end(); }
+    const payload = JSON.stringify(batch ? replies : replies[0]);
+    const accept = String(req.headers.accept || '');
+    if (accept.includes('text/event-stream') && !accept.includes('application/json')) {
+      headers['Content-Type'] = 'text/event-stream'; headers['Cache-Control'] = 'no-cache';
+      res.writeHead(200, headers);
+      return res.end('event: message\ndata: ' + payload + '\n\n');
+    }
     res.writeHead(200, headers);
-    res.end(JSON.stringify(batch ? replies : replies[0]));
+    res.end(payload);
   });
 });
 
