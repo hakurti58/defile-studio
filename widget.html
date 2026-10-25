@@ -1850,7 +1850,10 @@ function panelOverview(rp){
      <p class="note">Langue actuelle : <b>${esc((LANGS.find(x=>x[0]===(P.lang||'fr'))||['',P.lang])[1])}</b>. La traduction crée une copie du projet (textes, noms, catégories, mots affichés, format des nombres) ; l’original ne change pas.</p>
      <div class="row2"><div class="field"><label for="trLang">Traduire en</label><select id="trLang">${LANGS.filter(x=>x[0]!==(P.lang||'fr')).map(([k,n])=>`<option value="${k}">${n}</option>`).join('')}<option value="other">Autre langue…</option></select></div>
      <div class="field"><label for="trOther">Autre langue</label><input type="text" id="trOther" placeholder="ex. Swahili" disabled></div></div>
-     <button class="btn" type="button" id="trGo">Créer la version traduite</button><div class="status" id="trStatus"></div></div></div>`;
+     <label class="check"><input type="checkbox" id="trNames">Traduire aussi les noms des éléments (sinon : seuls les pays sont traduits)</label>
+     <div class="dtools"><button class="btn primary" type="button" id="trGo">Traduire en ligne</button><button class="btn" type="button" id="trAI">Faire traduire par l’IA</button></div>
+     <p class="note">« Traduire en ligne » utilise un service de traduction gratuit (MyMemory, environ 5 000 caractères par jour) et fonctionne partout, y compris dans ChatGPT et la version fichier. « Faire traduire par l’IA » utilise Claude ou ChatGPT selon l’endroit où l’appli est ouverte.</p>
+     <div class="status" id="trStatus"></div></div></div>`;
   mountForm($('#ovType'),P,[
     {k:'type',label:'Type de graphique',type:'select',options:TYPES.map(t=>[t.id,t.name])},
     {k:'platform',label:'Format vidéo (plateforme)',type:'select',options:PLATFORMS.map(x=>[x.id,`${x.name} · ${ORIENTS[x.orient].label} ${ORIENTS[x.orient].w}×${ORIENTS[x.orient].h}`])},
@@ -1888,9 +1891,12 @@ function panelOverview(rp){
   const csel=[...$('#ovFmt').querySelectorAll('select')][1];if(csel)csel.value=String(!!P.fmt.compact);
   function durTxt(){$('#durTxt').textContent=`Durée de la vidéo : ${mmss(totalDuration())} · ${M.periods.length} périodes`;}durTxt();
   $('#trLang').addEventListener('change',e=>{$('#trOther').disabled=e.target.value!=='other';if(e.target.value==='other')$('#trOther').focus();});
-  $('#trGo').addEventListener('click',async()=>{const v=$('#trLang').value;let code=v,name=(LANGS.find(x=>x[0]===v)||[])[1];if(v==='other'){name=$('#trOther').value.trim();if(!name){toast('Indiquez la langue');return;}code=name.slice(0,2).toLowerCase();}
-    const b=$('#trGo');b.disabled=true;try{await translateProject(code,name);}finally{if(b.isConnected)b.disabled=false;}});
-  getSampler().then(sm=>{if(!sm&&$('#trStatus')){$('#trStatus').innerHTML='<span class="dot warn"></span><span>La traduction fonctionne quand l’appli est ouverte dans Claude.</span>';$('#trGo').disabled=true;}});
+  const trPick=()=>{const v=$('#trLang').value;let code=v,name=(LANGS.find(x=>x[0]===v)||[])[1];if(v==='other'){name=$('#trOther').value.trim();if(!name){toast('Indiquez la langue (ex. Swahili ou son code : sw)');return null;}code=/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(name)?name:name.slice(0,2).toLowerCase();}return {code,name};};
+  $('#trGo').addEventListener('click',async()=>{const t=trPick();if(!t)return;const b=$('#trGo');b.disabled=true;try{await translateOnline(t.code,t.name,{names:$('#trNames').checked});}finally{if(b.isConnected)b.disabled=false;}});
+  $('#trAI').addEventListener('click',async()=>{const t=trPick();if(!t)return;
+    if(window.DEFILE_HOST&&window.DEFILE_HOST.inHost&&!window.claude){askHostTranslate(t.code,t.name);return;}
+    const b=$('#trAI');b.disabled=true;try{await translateProject(t.code,t.name);}finally{if(b.isConnected)b.disabled=false;}});
+  getSampler().then(sm=>{const b=$('#trAI');if(!b)return;if(!sm&&!(window.DEFILE_HOST&&window.DEFILE_HOST.inHost))b.hidden=true;});
   $$('[data-sp]').forEach(b=>b.addEventListener('click',()=>{Object.assign(P.anim,SPEEDS[b.dataset.sp]);panelOverview(rp);seek(Math.min(tNow,totalDuration()));onEdit();toast('Rythme « '+b.textContent+' » appliqué');}));
   $('#themes').addEventListener('click',e=>{const b=e.target.closest('[data-th]');if(!b)return;const th=THEMES[+b.dataset.th];const bg=bgL();bg.c1=th.c1;bg.c2=th.c2;if(bg.mode==='image'&&!bg.img)bg.mode='gradient';
     P.layers.forEach(l=>{if(['text','date','counter','events'].includes(l.type))l.color=th.text;if(l.type==='particles')l.color=th.text;});onEdit();});
@@ -2275,7 +2281,7 @@ function panelAIHost(rp){
   $('#aiIdeas').onclick=e=>{const b=e.target.closest('[data-idea]');if(b)$('#aiQ').value=b.dataset.idea;};
   $('#aiGo').onclick=async()=>{const q=$('#aiQ').value.trim();if(!q)return;try{await window.DEFILE_HOST.ask(q+' (utilise l’outil Défilé pour créer la vidéo)');$('#aiQ').value='';$('#aiSt').innerHTML='<span class="dot ok"></span><span>Demande envoyée dans la conversation.</span>';}catch(e){$('#aiSt').innerHTML='<span class="dot warn"></span><span>Impossible d’envoyer : écrivez votre demande directement dans ChatGPT.</span>';}};
 }
-function panelAI(rp){if(window.DEFILE_HOST&&window.DEFILE_HOST.inHost&&!window.claude){panelAIHost(rp);return;}
+function panelAI(rp){if(window.DEFILE_HOST&&window.DEFILE_HOST.inHost&&!window.claude){panelAIHost(rp);return;}if(!window.claude&&!(window.DEFILE_HOST&&window.DEFILE_HOST.inHost)){panelAIOffline(rp);return;}
   rp.innerHTML=`<div class="pane" style="height:100%;gap:12px"><h2 class="ptitle">Assistant Claude</h2>
     <div class="status" id="webStatus"><span class="dot"></span><span>Vérification des outils…</span></div>
     <div class="chatlog" id="chatLog" aria-live="polite"></div>
@@ -2323,15 +2329,68 @@ async function sendAI(){
   finally{setBusy(false);aiCtl=null;renderChat();if(tab==='overview')renderPanel();}
 }
 /* --- Traduction --- */
-async function translateProject(lang,langName){
-  const sm=await getSampler();if(!sm){toast('La traduction fonctionne quand l’appli est ouverte dans Claude');return;}
-  const st=$('#trStatus');const say=t=>{if(st)st.innerHTML=t;};
+function gatherTrSrc(){
   const src={name:P.name,texts:{},labels:{},events:{},elements:M.entities.map(e=>e.name),periods:M.periods.filter(x=>!/^\s*[-\d.,\/ ]+\s*$/.test(x)&&!parseDate(x)),categories:catList(P,M),words:Object.assign({},WORDS_FR,P.words||{})};
   P.layers.forEach(l=>{if(l.type==='text'&&String(l.text||'').trim())src.texts[l.id]=l.text;if(l.type==='counter'&&l.label)src.labels[l.id]=l.label;if(l.type==='events')(l.items||[]).forEach((ev,i)=>{src.events[l.id+'#'+i]=ev.text;});});
+  return src;
+}
+/* --- Traduction en ligne (sans Claude) --- */
+const WORDS_I18N={
+ en:{total:'total',rank:'RANK',name:'NAME',value:'VALUE',growth:'CHANGE',share:'SHARE',category:'CATEGORY',score:'SCORE',winner:'Winner: {x}',tie:'Tie!',perfectTie:'Perfect tie',leads:'{a} leads by {b}',since:'{x}% since {y}',others:'Others',champion:'CHAMPION',match:'Match {x} / {y}',matchday:'Matchday {x}',final:'Final',semi:'Semi-final',quarter:'Quarter-final',roundOf:'Round of {x}',draw:'Draw',victory:'Victory: {x}',standings:'Standings',played:'P',won:'W',drawn:'D',lost:'L',pts:'Pts',bye:'Bye',selected:'Selected',pick:'Draw #{x}'},
+ es:{total:'en total',rank:'PUESTO',name:'NOMBRE',value:'VALOR',growth:'EVOL.',share:'CUOTA',category:'CATEGORÍA',score:'MARCADOR',winner:'Ganador: {x}',tie:'¡Empate!',perfectTie:'Empate perfecto',leads:'{a} lidera por {b}',since:'{x} % desde {y}',others:'Otros',champion:'CAMPEÓN',match:'Partido {x} / {y}',matchday:'Jornada {x}',final:'Final',semi:'Semifinal',quarter:'Cuartos de final',roundOf:'Ronda de {x}',draw:'Empate',victory:'Victoria: {x}',standings:'Clasificación',played:'PJ',won:'G',drawn:'E',lost:'P',pts:'Pts',bye:'Exento',selected:'Seleccionados',pick:'Sorteo n.º {x}'},
+ de:{total:'insgesamt',rank:'RANG',name:'NAME',value:'WERT',growth:'ENTW.',share:'ANTEIL',category:'KATEGORIE',score:'STAND',winner:'Sieger: {x}',tie:'Unentschieden!',perfectTie:'Perfektes Unentschieden',leads:'{a} führt mit {b}',since:'{x} % seit {y}',others:'Andere',champion:'MEISTER',match:'Spiel {x} / {y}',matchday:'Spieltag {x}',final:'Finale',semi:'Halbfinale',quarter:'Viertelfinale',roundOf:'Runde der letzten {x}',draw:'Unentschieden',victory:'Sieg: {x}',standings:'Tabelle',played:'Sp',won:'S',drawn:'U',lost:'N',pts:'Pkt',bye:'Freilos',selected:'Ausgewählt',pick:'Ziehung Nr. {x}'},
+ it:{total:'in totale',rank:'POS.',name:'NOME',value:'VALORE',growth:'VAR.',share:'QUOTA',category:'CATEGORIA',score:'PUNTEGGIO',winner:'Vincitore: {x}',tie:'Pareggio!',perfectTie:'Pareggio perfetto',leads:'{a} è avanti di {b}',since:'{x}% dal {y}',others:'Altri',champion:'CAMPIONE',match:'Partita {x} / {y}',matchday:'Giornata {x}',final:'Finale',semi:'Semifinale',quarter:'Quarti di finale',roundOf:'Ottavi ({x})',draw:'Pareggio',victory:'Vittoria: {x}',standings:'Classifica',played:'G',won:'V',drawn:'N',lost:'P',pts:'Pt',bye:'Esente',selected:'Selezionati',pick:'Estrazione n. {x}'},
+ pt:{total:'no total',rank:'POS.',name:'NOME',value:'VALOR',growth:'VAR.',share:'QUOTA',category:'CATEGORIA',score:'PLACAR',winner:'Vencedor: {x}',tie:'Empate!',perfectTie:'Empate perfeito',leads:'{a} lidera por {b}',since:'{x}% desde {y}',others:'Outros',champion:'CAMPEÃO',match:'Jogo {x} / {y}',matchday:'Rodada {x}',final:'Final',semi:'Semifinal',quarter:'Quartas de final',roundOf:'Fase de {x}',draw:'Empate',victory:'Vitória: {x}',standings:'Classificação',played:'J',won:'V',drawn:'E',lost:'D',pts:'Pts',bye:'Folga',selected:'Selecionados',pick:'Sorteio nº {x}'},
+ nl:{total:'in totaal',rank:'RANG',name:'NAAM',value:'WAARDE',growth:'VERL.',share:'AANDEEL',category:'CATEGORIE',score:'STAND',winner:'Winnaar: {x}',tie:'Gelijkspel!',perfectTie:'Perfect gelijkspel',leads:'{a} leidt met {b}',since:'{x}% sinds {y}',others:'Overige',champion:'KAMPIOEN',match:'Wedstrijd {x} / {y}',matchday:'Speeldag {x}',final:'Finale',semi:'Halve finale',quarter:'Kwartfinale',roundOf:'Laatste {x}',draw:'Gelijkspel',victory:'Overwinning: {x}',standings:'Klassement',played:'G',won:'W',drawn:'GL',lost:'V',pts:'Ptn',bye:'Vrij',selected:'Geselecteerd',pick:'Trekking nr. {x}'}
+};
+const TR_CACHE_KEY='defile.trcache';
+let trCache={};try{trCache=JSON.parse(localStorage.getItem(TR_CACHE_KEY)||'{}')||{};}catch(e){}
+function saveTrCache(){try{const k=Object.keys(trCache);if(k.length>3000)k.slice(0,k.length-3000).forEach(x=>delete trCache[x]);localStorage.setItem(TR_CACHE_KEY,JSON.stringify(trCache));}catch(e){}}
+async function mtOne(text,from,to,signal){
+  const t=String(text||'').trim();if(!t)return text;const ck=from+'|'+to+'|'+t;if(trCache[ck])return trCache[ck];
+  const url='https://api.mymemory.translated.net/get?q='+encodeURIComponent(t.slice(0,480))+'&langpair='+encodeURIComponent(from+'|'+to);
+  const r=await fetch(url,{signal});if(!r.ok)throw new Error('http '+r.status);const j=await r.json();
+  const out=j&&j.responseData&&j.responseData.translatedText;if(j&&j.responseStatus&&+j.responseStatus!==200)throw new Error(String(j.responseDetails||'quota'));
+  if(!out||/MYMEMORY WARNING/i.test(out))throw new Error('quota');
+  const clean=out.replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&amp;/g,'&');trCache[ck]=clean;return clean;
+}
+async function mtMany(all,from,to,onProg){
+  const uniq=[...new Set(all)];const res=await mtManyU(uniq,from,to,onProg);const m=new Map(uniq.map((t,i)=>[t,res[i]]));return all.map(t=>m.get(t));
+}
+async function mtManyU(list,from,to,onProg){
+  const out=new Array(list.length);let i=0,done=0,err=null;
+  const worker=async()=>{while(i<list.length&&!err){const k=i++;try{out[k]=await mtOne(list[k],from,to);}catch(e){err=e;}done++;onProg&&onProg(done,list.length);}};
+  await Promise.all([worker(),worker(),worker(),worker()]);saveTrCache();if(err)throw err;return out;
+}
+function countryName(name,lang){const c=flagCode(name);if(!c||!/^[A-Z]{2}$/.test(c))return null;try{const n=new Intl.DisplayNames([lang],{type:'region'}).of(c);return n&&n!==c?n:null;}catch(e){return null;}}
+async function translateOnline(lang,langName,opts){
+  const st=$('#trStatus');const say=t=>{if(st)st.innerHTML=t;};const from=(P.lang||'fr').slice(0,2),to=String(lang).slice(0,5);
+  const src=gatherTrSrc();const texts=[],keys=[];
+  const push=(k,v)=>{if(String(v||'').trim()&&!/^\s*[-\d.,\/ %]+\s*$/.test(v)){keys.push(k);texts.push(String(v));}};
+  push('name',src.name);Object.entries(src.texts).forEach(([k,v])=>push('t:'+k,v));Object.entries(src.labels).forEach(([k,v])=>push('l:'+k,v));Object.entries(src.events).forEach(([k,v])=>push('e:'+k,v));
+  src.periods.forEach((v,i)=>push('p:'+i,v));src.categories.forEach((v,i)=>push('c:'+i,v));
+  const elOut=src.elements.map(n=>countryName(n,to));
+  if(opts&&opts.names)src.elements.forEach((n,i)=>{if(!elOut[i])push('n:'+i,n);});
+  const builtIn=WORDS_I18N[to.slice(0,2)];if(!builtIn)Object.entries(src.words).forEach(([k,v])=>push('w:'+k,v));
+  say(`<span class="dot"></span><span>Traduction en ligne vers ${esc(langName)}… 0 / ${texts.length}</span>`);
+  let res;try{res=texts.length?await mtMany(texts,from,to,(d,n)=>say(`<span class="dot"></span><span>Traduction en ligne vers ${esc(langName)}… ${d} / ${n}</span>`)):[];}
+  catch(e){say(`<span class="dot warn"></span><span>${/quota|429/i.test(String(e&&e.message))?'Limite quotidienne du service de traduction gratuit atteinte : réessayez demain ou utilisez « Faire traduire par l’IA ».':'Le service de traduction en ligne ne répond pas (connexion ou blocage). Utilisez « Faire traduire par l’IA ».'}</span>`);return;}
+  const out={texts:{},labels:{},events:{},elements:src.elements.slice(),periods:src.periods.slice(),categories:src.categories.slice(),words:Object.assign({},builtIn||{})};
+  keys.forEach((k,i)=>{const v=res[i];if(v==null)return;if(k==='name')out.name=v;else if(k.startsWith('t:'))out.texts[k.slice(2)]=v;else if(k.startsWith('l:'))out.labels[k.slice(2)]=v;else if(k.startsWith('e:'))out.events[k.slice(2)]=v;
+    else if(k.startsWith('p:'))out.periods[+k.slice(2)]=v;else if(k.startsWith('c:'))out.categories[+k.slice(2)]=v;else if(k.startsWith('n:'))out.elements[+k.slice(2)]=v;else if(k.startsWith('w:'))out.words[k.slice(2)]=v;});
+  elOut.forEach((v,i)=>{if(v)out.elements[i]=v;});
+  if(!out.name)out.name=P.name;await applyTranslation(src,out,to,langName);
+}
+async function translateProject(lang,langName){
+  const sm=await getSampler();if(!sm){toast('Assistant indisponible ici : utilisez la traduction en ligne');return;}
+  const st=$('#trStatus');const say=t=>{if(st)st.innerHTML=t;};const src=gatherTrSrc();
   say('<span class="dot"></span><span>Traduction en cours vers '+esc(langName)+'…</span>');
   let out;
   try{out=await sm.json(`Traduis le contenu de cette vidéo de données en ${langName} (code ${lang}). Garde exactement la même structure JSON et les mêmes clés ; traduis seulement les valeurs texte. Les noms de pays, d'animaux et les mots courants se traduisent ; les noms propres de personnes, marques, chaînes et équipes restent tels quels. Garde les marqueurs {x}, {y}, {a}, {b} intacts dans "words". Les tableaux gardent le même ordre et la même longueur. Réponds uniquement avec le JSON.\n\n${JSON.stringify(src)}`,{cache:false});}
   catch(e){say('<span class="dot warn"></span><span>'+(e&&e.code==='not_granted'?'Vous n’avez pas autorisé l’appli à utiliser Claude.':'La traduction a échoué : réessayez.')+'</span>');return;}
+  await applyTranslation(src,out,lang,langName);
+}
+async function applyTranslation(src,out,lang,langName){
   const q=clone(P);q.id=uid();q.lang=lang;q.created=q.updated=Date.now();q.name=String(out.name||P.name)+' ('+lang.toUpperCase()+')';
   const mapArr=(a,b)=>{const m=new Map();(a||[]).forEach((x,i)=>{const y=b&&b[i];if(y!=null&&String(y).trim())m.set(String(x).trim(),String(y).trim());});return m;};
   const nm=mapArr(src.elements,out.elements),pm=mapArr(src.periods,out.periods),cm=mapArr(src.categories,out.categories);
@@ -2407,7 +2466,7 @@ function panelStrategy(rp){
       <div class="dtools"><button class="btn small" type="button" id="hookGen">Proposer des accroches</button><button class="btn small primary" type="button" id="coverDl">Télécharger la couverture</button></div>
       <div class="dtools" id="hookList"></div></div>
     <div class="group"><span class="gt">Analyse et plan de publication</span>
-      <p class="note">Claude joue l’analyste des tendances pour <b>${esc(pl.name)}</b> : titres, accroches, description, hashtags, moment de publication, ce que font les comptes concurrents et idées de prochaines vidéos. Dans l’app Claude pour ordinateur, il cherche aussi sur internet ; sinon, il s’appuie sur ses connaissances. Il n’a pas accès aux statistiques de vos comptes.</p>
+      <p class="note">L’analyste des tendances prépare pour <b>${esc(pl.name)}</b> : titres, accroches, description, hashtags, moment de publication, ce que font les comptes concurrents et idées de prochaines vidéos. Avec Claude ou ChatGPT, l’analyse est faite par l’IA (avec recherche internet quand elle est disponible) ; sinon, un plan automatique est généré à partir de vos données. Aucun accès aux statistiques de vos comptes.</p>
       <div class="dtools"><button class="btn primary" type="button" id="stratGo">Analyser et proposer</button><button class="btn" type="button" id="stratStop" hidden>Arrêter</button></div>
       <div class="status" id="stratStatus"></div>
       <textarea class="pastebox" id="stratOut" rows="16" placeholder="Le plan apparaîtra ici." aria-label="Plan de publication">${esc(P.strategy||'')}</textarea>
@@ -2419,16 +2478,23 @@ function panelStrategy(rp){
     {k:'hook',label:'Accroche',type:'textarea'},{k:'sub',label:'Bandeau',type:'text',ph:'ex. 1960 → 2024'},{k:'accent',label:'Couleur du bandeau',type:'color'}],()=>{draw();touch();});
   draw();loadFont().then(draw);
   $('#coverDl').onclick=async()=>{await loadFont();const f=COVER_FMT[c.fmt];const cc=document.createElement('canvas');cc.width=f.w;cc.height=f.h;drawCoverImg(cc.getContext('2d'),f.w,f.h,c);cc.toBlob(b=>{if(b)offerFile(b,`${safeName()} couverture ${f.w}x${f.h}.png`);},'image/png');};
-  $('#hookGen').onclick=async()=>{const sm=await getSampler();const box=$('#hookList');if(!sm){toast('Disponible quand l’appli est ouverte dans Claude');return;}
+  $('#hookGen').onclick=async()=>{const sm=await getSampler();const box=$('#hookList');
+    if(!sm){const hs=offlineHooks();box.innerHTML=hs.map(h=>`<button class="btn small ghost" type="button" data-hook="${esc(h)}">${esc(h)}</button>`).join('');
+      if(window.DEFILE_HOST&&window.DEFILE_HOST.inHost)box.insertAdjacentHTML('beforeend','<button class="btn small" type="button" id="hookAsk">Plus d’idées avec ChatGPT</button>');return;}
     box.innerHTML='<span class="note">Claude réfléchit…</span>';const tl=P.layers.find(l=>l.name==='Titre');
     try{const arr=await sm.json(`Propose 6 accroches de miniature pour une vidéo ${TYPE_NAME[P.type]} sur ${pl.name}. Sujet : « ${tl?tl.text:P.name} ». Éléments : ${M.entities.slice(0,10).map(e=>e.name).join(', ')}. Langue : ${(LANGS.find(x=>x[0]===(P.lang||'fr'))||['','Français'])[1]}. Maximum 6 mots chacune, percutantes, curiosité ou enjeu, sans emoji, pas de clickbait mensonger. Réponds avec un tableau JSON de chaînes.`,{cache:false});
       box.innerHTML=(Array.isArray(arr)?arr:[]).slice(0,8).map(h=>`<button class="btn small ghost" type="button" data-hook="${esc(String(h))}">${esc(String(h))}</button>`).join('');}
     catch(e){box.innerHTML='<span class="note">Impossible de proposer des accroches pour le moment.</span>';}};
-  $('#hookList').onclick=e=>{const b=e.target.closest('[data-hook]');if(!b)return;c.hook=b.dataset.hook.toUpperCase();panelStrategy(rp);touch();};
+  $('#hookList').onclick=e=>{if(e.target.id==='hookAsk'){const s=projSummary();askAI(`Propose 8 accroches de miniature (6 mots max, percutantes, sans clickbait mensonger) pour ma vidéo ${s.type} sur ${s.platform} : « ${s.title} ». Éléments : ${s.elements.join(', ')}.`).then(()=>toast('Demande envoyée à ChatGPT'));return;}const b=e.target.closest('[data-hook]');if(!b)return;c.hook=b.dataset.hook.toUpperCase();panelStrategy(rp);touch();};
   $('#stratCopy').onclick=async()=>{const ta=$('#stratOut');try{await navigator.clipboard.writeText(ta.value);toast('Copié');}catch(e){ta.focus();ta.select();toast('Texte sélectionné : Ctrl+C pour copier');}};
   $('#stratOut').oninput=e=>{P.strategy=e.target.value;touch();};
   $('#stratStop').onclick=()=>{if(stratCtl)stratCtl.abort();};
-  $('#stratGo').onclick=async()=>{const sm=await getSampler();if(!sm){toast('Disponible quand l’appli est ouverte dans Claude');return;}
+  $('#stratGo').onclick=async()=>{const sm=await getSampler();
+    if(!sm){const out=$('#stratOut');out.value=offlinePlan();P.strategy=out.value;touch();
+      if(window.DEFILE_HOST&&window.DEFILE_HOST.inHost){const s=projSummary();$('#stratStatus').innerHTML='<span class="dot ok"></span><span>Plan de base prêt. Demande d’analyse complète envoyée à ChatGPT dans la conversation.</span>';
+        askAI(`Agis comme analyste des tendances et stratège de contenu. Ma vidéo : ${s.type} pour ${s.platform}, durée ${s.duration}, sujet « ${s.title} », éléments ${s.elements.join(', ')}, période ${s.first} à ${s.last}, langue ${s.lang}. Cherche ce qui marche en ce moment chez les comptes similaires et donne : 5 titres à tester, 3 accroches de couverture, les 3 premières secondes, une description prête à coller, des hashtags (3 larges, 5 moyens, 7 de niche), les meilleurs créneaux de publication, l’analyse de la concurrence et 5 idées de prochaines vidéos.`).catch(()=>{});}
+      else $('#stratStatus').innerHTML='<span class="dot ok"></span><span>Plan automatique prêt (sans IA). Adaptez-le à votre compte.</span>';
+      return;}
     const out=$('#stratOut'),st=$('#stratStatus');$('#stratGo').disabled=true;$('#stratStop').hidden=false;stratCtl=new AbortController();out.value='';st.innerHTML='<span class="dot"></span><span>Analyse en cours… (une à deux minutes avec la recherche internet)</span>';
     const web=await detectWeb();let lim=null;try{lim=await sm.limits();}catch(e){}
     const tl=P.layers.find(l=>l.name==='Titre');const langName=(LANGS.find(x=>x[0]===(P.lang||'fr'))||['','Français'])[1];
@@ -2449,6 +2515,84 @@ Sois concret, sans promesses de résultats.`;
       const {text}=await sm(prompt,opts);out.value=text;P.strategy=text;touch();st.innerHTML='<span class="dot ok"></span><span>Plan prêt. Les créneaux et tendances sont indicatifs.</span>';}
     catch(e){if(e&&e.text)out.value=e.text;st.innerHTML='<span class="dot warn"></span><span>'+(e&&e.code==='cancelled'?'Analyse arrêtée.':e&&e.code==='not_granted'?'Vous n’avez pas autorisé l’appli à utiliser Claude.':'L’analyse a échoué : réessayez.')+'</span>';}
     finally{const g=$('#stratGo');if(g)g.disabled=false;const s2=$('#stratStop');if(s2)s2.hidden=true;stratCtl=null;}};
+}
+/* ====================== IA facultative ====================== */
+async function aiMode(){const sm=await getSampler();if(sm)return 'claude';if(window.DEFILE_HOST&&window.DEFILE_HOST.inHost)return 'host';return 'none';}
+function projSummary(){const tl=P.layers.find(l=>l.name==='Titre');const pl=PLATFORMS.find(x=>x.id===P.platform)||PLATFORMS[0];
+  return {title:tl?tl.text:P.name,type:TYPE_NAME[P.type],platform:pl.name,elements:M.entities.slice(0,15).map(e=>e.name),first:M.periods[0]||'',last:M.periods[M.periods.length-1]||'',duration:mmss(totalDuration()),lang:(LANGS.find(x=>x[0]===(P.lang||'fr'))||['','Français'])[1]};}
+function leaderName(){try{if(P.type==='tournament'){const pl=tourPlan(P,M);return pl.champion&&pl.champion.name;}if(P.type==='scroll'){const l=scrollList(P,M).find(x=>x.kind==='item');return l&&l.e.name;}
+  const sim=createSim();simStep(sim,P,M,Math.max(0,totalDuration()-P.anim.holdEnd),0,true);RP=P;RM=M;return sim.items[0]&&sim.items[0].e.name;}catch(e){return null;}}
+function offlineHooks(){const s=projSummary(),lead=leaderName()||'',n=M.entities.length;const ttl=s.title.toUpperCase();
+  const span=s.first&&s.last&&s.first!==s.last&&P.type!=='versus'&&P.type!=='tournament'&&P.type!=='scroll'?`${s.first} → ${s.last}`:'';
+  const out=[ttl.split(/\s+/).slice(0,6).join(' '),'QUI VA GAGNER ?','LE N°1 VA VOUS SURPRENDRE',lead?`${lead.toUpperCase()} INARRÊTABLE ?`:'',span?`${span} : TOUT CHANGE`:'',`TOP ${n} : VOUS AVIEZ DEVINÉ ?`,P.type==='versus'||P.type==='compare'?'LE DUEL ULTIME':'',P.type==='tournament'?'UN SEUL CHAMPION':'',P.type==='size'?'LE DERNIER EST GÉANT':''];
+  return [...new Set(out.filter(Boolean))].slice(0,8);}
+function tagify(x){return '#'+String(x).normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]/g,'');}
+function offlinePlan(){
+  const s=projSummary(),pl=PLATFORMS.find(x=>x.id===P.platform)||PLATFORMS[0],lead=leaderName()||'le n°1',hooks=offlineHooks();const vertical=['tiktok','shorts','reels'].includes(pl.id);
+  const cats=catList(P,M);const span=s.first&&s.last&&s.first!==s.last?`${s.first}–${s.last}`:'';
+  const typeTag={bar:'#barchartrace',line:'#datavisualization',table:'#classement',bubble:'#dataviz',treemap:'#dataviz',pie:'#statistiques',barline:'#dataviz',compare:'#comparaison',compare2:'#comparaison',versus:'#versus',bar3d:'#3d',tournament:'#tournoi',scroll:'#top',wheel:'#roue',size:'#comparaisondetaille'}[P.type]||'#data';
+  const broad=['#data','#statistiques',vertical?'#pourtoi':'#infographie'];const mid=[typeTag,'#classement','#top'+M.entities.length,'#chiffres','#histoire'];
+  const niche=[...M.entities.slice(0,4).map(e=>tagify(e.name)),...cats.slice(0,3).map(tagify)].filter(t=>t.length>2).slice(0,7);
+  const times=vertical?'Du lundi au jeudi entre 18 h et 21 h, et le samedi en fin de matinée (heure de votre public).':pl.id==='linkedin'?'Du mardi au jeudi entre 8 h et 10 h ou vers 12 h.':'Le jeudi ou le vendredi en fin d’après-midi, ou le samedi matin, pour profiter du week-end.';
+  return `PLAN AUTOMATIQUE (sans IA, à adapter)
+
+1. TITRES À TESTER
+- ${s.title}${span?' ('+span+')':''}
+- Qui domine ? ${s.title}
+- ${lead} est-il vraiment le n°1 ?
+- ${M.entities.length} ${P.type==='versus'||P.type==='tournament'?'adversaires':'éléments'}, un seul gagnant
+- Le classement qui a tout changé${span?' en '+(s.last):''}
+
+2. ACCROCHES DE COUVERTURE
+${hooks.slice(0,3).map(h=>'- '+h).join('\n')}
+
+3. LES 3 PREMIÈRES SECONDES
+- Montrez tout de suite l’enjeu : « Qui sera n°1 à la fin ? » écrit en grand.
+- Démarrez sur un mouvement (dépassement, roue qui tourne, premier match) plutôt que sur un écran fixe.
+- ${vertical?'Format vertical : gardez le titre dans le tiers supérieur et le chiffre clé au centre.':'Gardez la miniature et les premières images cohérentes avec le titre.'}
+
+4. DESCRIPTION
+${s.title}${span?' de '+span.replace('–',' à '):''}. Regardez jusqu’à la fin pour découvrir qui termine en tête !
+Données : ${(P.layers.find(l=>l.name==='Source')||{}).text||'à préciser'}.
+Dites en commentaire qui vous attendiez à la première place.
+
+5. HASHTAGS
+${[...broad,...mid,...niche].join(' ')}
+
+6. QUAND PUBLIER (indicatif)
+${times}
+Comparez ensuite avec les statistiques de votre compte, qui restent la meilleure référence.
+
+7. CONCURRENCE ET TENDANCES (à vérifier vous-même)
+- Cherchez « ${s.title} » et « ${typeTag.slice(1)} » sur ${pl.name} : notez les vidéos les plus vues des 30 derniers jours, leur durée et leur accroche.
+- Différenciez-vous : données plus récentes, angle local (votre pays), ou duel inattendu.
+- Durée de cette vidéo : ${s.duration}${pl.limit&&totalDuration()>pl.limit?` (trop long pour ${pl.name}, raccourcissez)`:''}.
+
+8. PROCHAINES VIDÉOS
+- La même chose limitée à l’Europe ou à votre pays
+- Un versus entre les deux premiers
+- Un championnat entre les 8 premiers
+- Une version « défilement » avec 50 éléments
+- La suite avec les données de l’année prochaine`;
+}
+async function askAI(promptForHost){if(window.DEFILE_HOST&&window.DEFILE_HOST.inHost){await window.DEFILE_HOST.ask(promptForHost);return true;}return false;}
+function panelAIOffline(rp){
+  rp.innerHTML=`<div class="pane"><h2 class="ptitle">Préparer les données avec une IA</h2>
+    <p class="note">Ici, l’appli n’est reliée à aucune IA. Décrivez la vidéo voulue : Défilé écrit la consigne à coller dans ChatGPT, Claude ou une autre IA, puis vous collez sa réponse ci-dessous.</p>
+    <div class="field"><label for="ofQ">Votre demande</label><textarea id="ofQ" rows="3" placeholder="Ex. Top 10 des YouTubeurs les plus abonnés de 2015 à 2024"></textarea></div>
+    <div class="field"><label for="ofT">Type de vidéo</label><select id="ofT">${TYPES.map(t=>`<option value="${t.id}"${t.id===P.type?' selected':''}>${t.name}</option>`).join('')}</select></div>
+    <div class="dtools"><button class="btn primary" type="button" id="ofMk">Copier la consigne</button></div>
+    <textarea class="pastebox" id="ofPrompt" rows="6" readonly aria-label="Consigne à copier" hidden></textarea>
+    <div class="field"><label for="ofAns">Réponse de l’IA (tableau ou CSV)</label><textarea class="pastebox" id="ofAns" rows="6" placeholder="Collez ici le tableau renvoyé par l’IA"></textarea></div>
+    <div class="dtools"><button class="btn" type="button" id="ofGo">Charger ces données</button></div><div class="status" id="ofSt"></div></div>`;
+  const fmtOf=t=>t==='versus'||t==='tournament'?'première ligne : "Critère;Participant 1;Participant 2;…", puis une ligne par critère':t==='scroll'?'première ligne : "Nom;Pays;autres colonnes…", puis une ligne par élément':t==='wheel'?'première ligne : "Nom;Poids", puis une ligne par élément':t==='size'?'première ligne : "Nom;Hauteur", puis une ligne par élément':'première ligne : "Date;Élément 1;Élément 2;…", puis une ligne par date, dans l’ordre chronologique';
+  $('#ofMk').onclick=async()=>{const q=$('#ofQ').value.trim();if(!q){toast('Décrivez d’abord la vidéo');return;}const t=$('#ofT').value;
+    const txt=`Prépare les données d'une vidéo animée : ${q}.\nRéponds uniquement avec un tableau CSV séparé par des points-virgules, dans un bloc de code, ${fmtOf(t)}.\nNombres sans unité ni espace (point ou virgule pour les décimales), case vide si inconnu.\nAprès le tableau, indique en une ligne la source des chiffres et l'unité.`;
+    const ta=$('#ofPrompt');ta.hidden=false;ta.value=txt;try{await navigator.clipboard.writeText(txt);toast('Consigne copiée : collez-la dans votre IA');}catch(e){ta.focus();ta.select();toast('Consigne sélectionnée : Ctrl+C pour copier');}
+    if(t!==P.type){P.type=t;changeType();onEdit();}};
+  $('#ofGo').onclick=()=>{let a=$('#ofAns').value;if(!a.trim()){toast('Collez d’abord la réponse');return;}
+    const m=a.match(/```[a-z]*\n([\s\S]*?)```/i);if(m)a=m[1];const lines=a.split('\n').filter(l=>/[;,\t]/.test(l));if(lines.length<2){$('#ofSt').innerHTML='<span class="dot warn"></span><span>Aucun tableau reconnu dans la réponse.</span>';return;}
+    replaceData(parseDelimited(lines.join('\n')),$('#ofQ').value.trim().slice(0,80));$('#ofSt').innerHTML=`<span class="dot ok"></span><span>${M.entities.length} éléments chargés. Réglez l’unité dans Données si besoin.</span>`;};
 }
 /* --- Audio --- */
 function panelAudio(rp){
@@ -2493,7 +2637,7 @@ function panelExports(rp){
   $('#exPlat').addEventListener('change',e=>{P.platform=e.target.value;const p2=PLATFORMS.find(x=>x.id===P.platform);if(p2.orient!==P.orient){P.orient=p2.orient;changeOrient();}EX.res=1080;pSim=createSim();onEdit();panelExports(rp);toast(`Format ${p2.name} appliqué`);});
   $('#postCopy').addEventListener('click',async()=>{const ta=$('#postOut');try{await navigator.clipboard.writeText(ta.value);toast('Texte copié');}catch(e){ta.focus();ta.select();toast('Texte sélectionné : Ctrl+C pour copier');}});
   $('#postGen').addEventListener('click',async()=>{const sm=await getSampler();const ta=$('#postOut');
-    if(!sm){ta.value=postFallback(pl);toast('Texte de base généré (assistant disponible dans Claude)');return;}
+    if(!sm){ta.value=postFallback(pl);if(window.DEFILE_HOST&&window.DEFILE_HOST.inHost){const s=projSummary();askAI(`Rédige le texte de publication pour ${pl.name} de ma vidéo « ${s.title} » (${s.type}, éléments : ${s.elements.join(', ')}) : un titre adapté, une description de 2 à 4 phrases et 8 à 15 hashtags.`).then(()=>toast('Texte de base prêt ; version IA demandée à ChatGPT')).catch(()=>{});}else toast('Texte de base généré');return;}
     const b=$('#postGen');b.disabled=true;ta.value='Claude rédige…';
     const tl=P.layers.find(l=>l.name==='Titre');const ents=M.entities.slice(0,12).map(e=>e.name).join(', ');
     try{const {text}=await sm(`Rédige le texte de publication d'une vidéo animée de données pour ${pl.name}. Sujet : « ${tl?tl.text:P.name} ». Éléments : ${ents}. Période : ${M.periods[0]||''} à ${M.periods[M.periods.length-1]||''}. Format : un titre accrocheur (adapté aux limites de ${pl.name}), une description de 2 à 4 phrases en français, puis 8 à 15 hashtags pertinents. Pas d'emoji excessifs. Réponds seulement avec le texte prêt à coller.`,{onText:({text})=>{ta.value=text;}});ta.value=text;}
@@ -2509,7 +2653,13 @@ function panelExports(rp){
   $('#cancelBtn').addEventListener('click',()=>{cancelReq=true;});
   if(exporting){$('#exProg').hidden=false;$('#renderBtn').disabled=true;}
 }
-function postFallback(pl){const tl=P.layers.find(l=>l.name==='Titre');const t=tl?tl.text:P.name;const tags=['#data','#classement','#'+(TYPE_NAME[P.type]||'').replace(/\s+/g,''),...M.entities.slice(0,5).map(e=>'#'+norm(e.name))];return `${t} (${M.periods[0]||''}–${M.periods[M.periods.length-1]||''})\n\nQui domine le classement ? Regardez l’évolution jusqu’à la fin !\n\n${tags.join(' ')}`;}
+function askHostTranslate(code,name){
+  const tl=P.layers.find(l=>l.name==='Titre'),st=P.layers.find(l=>l.name==='Sous-titre'),so=P.layers.find(l=>l.name==='Source');
+  const d={type:P.type,platform:P.platform,title:tl?tl.text:P.name,subtitle:st?st.text:'',source:so?so.text.replace(/^Source\s*:\s*/,''):'',header:P.data[0],rows:P.data.slice(1),prefix:P.fmt.prefix,suffix:P.fmt.suffix,decimals:P.fmt.decimals,lowerBetter:chartL().lowerBetter||[]};
+  let js=JSON.stringify(d);if(js.length>12000){toast('Tableau trop grand pour l’envoyer : utilisez « Traduire en ligne »');return;}
+  window.DEFILE_HOST.ask(`Traduis cette vidéo Défilé en ${name} (${code}) : titre, sous-titre, source, en-têtes, libellés et noms de pays ou mots courants (garde les noms propres de personnes et de marques), sans toucher aux nombres. Puis appelle l’outil defile_create avec le résultat traduit. Données : ${js}`).then(()=>toast('Demande de traduction envoyée à ChatGPT')).catch(()=>toast('Impossible d’envoyer la demande à ChatGPT'));
+}
+function postFallback(pl){const plan=offlinePlan();const tg=(plan.match(/5\. HASHTAGS\n([^\n]+)/)||[])[1];const s=projSummary();if(tg)return `${s.title}${s.first&&s.last&&s.first!==s.last?' ('+s.first+'–'+s.last+')':''}\n\nQui termine en tête ? Regardez jusqu’à la fin et dites en commentaire votre pronostic !\n\n${tg}`;const tl=P.layers.find(l=>l.name==='Titre');const t=tl?tl.text:P.name;const tags=['#data','#classement','#'+(TYPE_NAME[P.type]||'').replace(/\s+/g,''),...M.entities.slice(0,5).map(e=>'#'+norm(e.name))];return `${t} (${M.periods[0]||''}–${M.periods[M.periods.length-1]||''})\n\nQui domine le classement ? Regardez l’évolution jusqu’à la fin !\n\n${tags.join(' ')}`;}
 const safeName=()=>(P.name||'video').replace(/[\\/:*?"<>|]+/g,'').trim().slice(0,80)||'video';
 function progress(i,n,t0,label){const bar=$('#progBar');if(!bar)return;const pc=n?i/n:0;bar.style.width=(pc*100).toFixed(1)+'%';$('#progTxt').textContent=label||`Image ${i} / ${n} (${Math.round(pc*100)} %)`;
   const el=(performance.now()-t0)/1000;$('#progEta').textContent=i>5?'Reste environ '+mmss(el/i*(n-i)):'';}
